@@ -1,175 +1,151 @@
+import { useEffect, useMemo, useState } from 'react';
+import { Search, Plus, Package } from 'lucide-react';
 import ProductModal from '../components/ProductModal';
-import { useState } from 'react';
-import { products } from '../data/products';
-import { formatCurrency } from '../utils/formatCurrency';
-import { Search, Plus, Edit2, Trash2, Package } from 'lucide-react';
+import CategoryModal from '../components/CategoryModal';
+import { getStoredProducts, saveStoredProducts } from '../utils/productStorage';
 
 const Products = () => {
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingProduct, setEditingProduct] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('All');
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [productList, setProductList] = useState(getStoredProducts);
+  const [isProductModalOpen, setIsProductModalOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState(null);
+  const [selectedGroup, setSelectedGroup] = useState(null);
 
-  const categories = ['All', 'Beverages', 'Groceries', 'Pharmacy'];
+  useEffect(() => {
+    const syncProducts = () => setProductList(getStoredProducts());
+    syncProducts();
+    window.addEventListener('products-updated', syncProducts);
+    return () => window.removeEventListener('products-updated', syncProducts);
+  }, []);
 
-  const filtered = products.filter((p) => {
-    const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = selectedCategory === 'All' || p.category === selectedCategory;
-    return matchesSearch && matchesCategory;
+  const groups = useMemo(() => {
+    const map = {};
+    productList.forEach((p) => {
+      const key = p.groupName || p.category || 'Other';
+      if (!map[key]) {
+        map[key] = { groupName: key, items: [], totalStock: 0 };
+      }
+      map[key].items.push(p);
+      map[key].totalStock += Number(p.stock || 0);
+    });
+    return Object.values(map).sort((a, b) => a.groupName.localeCompare(b.groupName));
+  }, [productList]);
+
+  const filteredGroups = groups.filter((g) => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return true;
+    const groupMatch = g.groupName.toLowerCase().includes(query);
+    const itemMatch = g.items.some((p) => p.name.toLowerCase().includes(query));
+    return groupMatch || itemMatch;
   });
 
-  const getStockStatus = (stock) => {
-    if (stock <= 10) return { text: 'Critical', color: 'bg-red-100 text-red-700' };
-    if (stock <= 20) return { text: 'Low', color: 'bg-orange-100 text-orange-700' };
-    return { text: 'Good', color: 'bg-green-100 text-green-700' };
+  const getStockStatus = (totalStock) => {
+    if (totalStock <= 5) return { label: 'Critical', class: 'badge-red' };
+    if (totalStock <= 15) return { label: 'Low', class: 'badge-orange' };
+    return { label: 'Good', class: 'badge-green' };
+  };
+
+  const openAddProduct = () => {
+    setEditingProduct(null);
+    setIsProductModalOpen(true);
+  };
+
+  const handleSaveProduct = (productData) => {
+    let nextList;
+    if (editingProduct) {
+      nextList = productList.map((product) =>
+        product.id === editingProduct.id ? { ...product, ...productData, id: editingProduct.id } : product
+      );
+    } else {
+      nextList = [
+        {
+          ...productData,
+          groupName: productData.name,
+          id: `product-${Date.now()}`,
+          barcode: productData.barcode || `barcode-${Date.now()}`,
+          stock: Number(productData.stock || 0),
+        },
+        ...productList,
+      ];
+    }
+    setProductList(nextList);
+    saveStoredProducts(nextList);
+  };
+
+  const handleGroupChange = (updatedGroupProducts, groupName) => {
+    const others = productList.filter((p) => (p.groupName || p.category) !== groupName);
+    const next = [...updatedGroupProducts, ...others];
+    setProductList(next);
+    saveStoredProducts(next);
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Products</h1>
-          <p className="text-sm text-gray-500">Manage your inventory</p>
+          <h1 className="text-2xl font-bold text-white">Products</h1>
+          <p className="text-sm text-gray-500 mt-1">{groups.length} product types • {productList.length} total items</p>
         </div>
-        <button
-          onClick={() => {
-            setEditingProduct(null);
-            setIsModalOpen(true);
-          }}
-          className="flex items-center gap-2 bg-purple-600 text-white px-4 py-2.5 rounded-lg font-medium hover:bg-purple-700 transition-colors"
-        >
+        <button onClick={openAddProduct} className="btn btn-primary flex items-center gap-2">
           <Plus className="w-4 h-4" />
           Add Product
         </button>
       </div>
 
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input
-            type="text"
-            placeholder="Search products..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-          />
-        </div>
-        <div className="flex gap-2">
-          {categories.map((cat) => (
-            <button
-              key={cat}
-              onClick={() => setSelectedCategory(cat)}
-              className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                selectedCategory === cat
-                  ? 'bg-purple-600 text-white'
-                  : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
-              }`}
-            >
-              {cat}
-            </button>
-          ))}
-        </div>
+      <div className="relative w-full sm:w-80">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+        <input
+          type="text"
+          placeholder="Search products..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="input pl-10 w-full"
+        />
       </div>
 
-      <div key={refreshKey} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-100 text-left text-gray-500 bg-gray-50">
-                <th className="px-5 py-3 font-medium">Product</th>
-                <th className="px-5 py-3 font-medium">Category</th>
-                <th className="px-5 py-3 font-medium">Price</th>
-                <th className="px-5 py-3 font-medium">Stock</th>
-                <th className="px-5 py-3 font-medium">Status</th>
-                <th className="px-5 py-3 font-medium">Barcode</th>
-                <th className="px-5 py-3 font-medium text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.slice(0, 50).map((product) => {
-                const status = getStockStatus(product.stock);
-                return (
-                  <tr key={product.id} className="border-b border-gray-50 hover:bg-gray-50">
-                    <td className="px-5 py-3">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center">
-                          <Package className="w-5 h-5 text-gray-400" />
-                        </div>
-                        <div>
-                          <p className="font-medium text-gray-900">{product.name}</p>
-                          {product.batchNumber && (
-                            <p className="text-xs text-gray-400">Batch: {product.batchNumber}</p>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-5 py-3">
-                      <span className="px-2 py-1 bg-gray-100 rounded-full text-xs font-medium text-gray-600">
-                        {product.category}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3 font-medium text-gray-900">{formatCurrency(product.price)}</td>
-                    <td className="px-5 py-3 text-gray-600">{product.stock}</td>
-                    <td className="px-5 py-3">
-                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${status.color}`}>
-                        {status.text}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3 text-xs text-gray-400 font-mono">{product.barcode}</td>
-                    <td className="px-5 py-3 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={() => {
-                            setEditingProduct(product);
-                            setIsModalOpen(true);
-                          }}
-                          className="flex items-center gap-2 bg-purple-600 text-white px-4 py-2.5 rounded-lg font-medium hover:bg-purple-700 transition-colors"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => {
-                            if (window.confirm(`Delete "${product.name}"? This cannot be undone.`)) {
-                              const idx = products.findIndex((p) => p.id === product.id);
-                              if (idx !== -1) products.splice(idx, 1);
-                              setRefreshKey((prev) => prev + 1);
-                            }
-                          }}
-                          className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+      {filteredGroups.length === 0 ? (
+        <div className="p-8 text-center">
+          <Package className="w-12 h-12 text-gray-700 mx-auto mb-3" />
+          <p className="text-sm text-gray-500">No products found</p>
         </div>
-        {filtered.length > 50 && (
-          <div className="px-5 py-3 border-t border-gray-100 text-center text-sm text-gray-500">
-            Showing 50 of {filtered.length} products
-          </div>
-        )}
-      </div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+          {filteredGroups.map((group) => {
+            const status = getStockStatus(group.totalStock);
+            return (
+              <div
+                key={group.groupName}
+                onClick={() => setSelectedGroup(group.groupName)}
+                className="rounded-xl border border-white/10 bg-[#12121a] p-4 cursor-pointer hover:border-white/20 hover:shadow-lg hover:scale-[1.02] transition-transform"
+              >
+                <div className="flex items-start justify-between">
+                  <div className="h-11 w-11 rounded-lg bg-purple-600/20 flex items-center justify-center">
+                    <Package className="w-5 h-5 text-purple-400" />
+                  </div>
+                  <span className={`badge ${status.class} text-xs`}>{status.label}</span>
+                </div>
+                <h3 className="mt-3 text-base font-semibold text-white leading-snug">{group.groupName}</h3>
+                <p className="text-xs text-gray-500 mt-1">{group.items.length} variant{group.items.length !== 1 ? 's' : ''}</p>
+                <p className="text-sm font-medium text-gray-300 mt-2">{group.totalStock} in stock</p>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       <ProductModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
+        isOpen={isProductModalOpen}
+        onClose={() => setIsProductModalOpen(false)}
+        onSave={handleSaveProduct}
         product={editingProduct}
-        onSave={(data) => {
-          if (editingProduct) {
-            const idx = products.findIndex((p) => p.id === editingProduct.id);
-            if (idx !== -1) products[idx] = { ...editingProduct, ...data };
-          } else {
-            const newId = Math.max(...products.map((p) => p.id), 0) + 1;
-            products.push({ id: newId, ...data });
-          }
-          setRefreshKey((prev) => prev + 1);
-          setIsModalOpen(false);
-        }}
+      />
+
+      <CategoryModal
+        isOpen={!!selectedGroup}
+        onClose={() => setSelectedGroup(null)}
+        category={selectedGroup}
+        products={productList.filter((p) => (p.groupName || p.category) === selectedGroup)}
+        onChange={(updated) => handleGroupChange(updated, selectedGroup)}
       />
     </div>
   );
